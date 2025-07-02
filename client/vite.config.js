@@ -4,8 +4,15 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   plugins: [react()],
   server: {
+    host: '0.0.0.0', // Allows access from external devices (needed for Ngrok)
+    port: 5173, 
+    port: 5174,
+
     proxy: {
-      '/api': 'http://localhost:5005' // Proxy API requests to backend server
-    }
-  }
+      '/api': {
+        target: 'http://localhost:5005',
+        changeOrigin: true,
+      },
+    },
+  },
 });
