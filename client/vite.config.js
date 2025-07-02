@@ -6,7 +6,6 @@ export default defineConfig({
   server: {
     host: '0.0.0.0', // Allows access from external devices (needed for Ngrok)
     port: 5173, 
-    port: 5174,
 
     proxy: {
       '/api': {
