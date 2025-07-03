@@ -1,3 +1,4 @@
+// App.jsx
 "use client"
 
 import { useState } from "react"
@@ -6,7 +7,6 @@ import { DashboardView, NotebookDetailView } from "./components/notebook-compone
 import { PageView, OrderPortalView } from "./components/page-components"
 import { PinInputView, ScanningOverlay, ScanResultModal } from "./components/modal-components"
 
-// Main App Component
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [user, setUser] = useState(null)
@@ -26,9 +26,8 @@ function App() {
     contactPhone: "",
   })
 
-  // Handle login with Google Sign-In
   const handleLogin = (userData) => {
-    console.log('App.jsx handleLogin:', userData)
+    console.log("App.jsx handleLogin:", userData)
     setUser(userData)
     setIsAuthenticated(true)
     setActiveView("dashboard")
@@ -43,7 +42,6 @@ function App() {
     setActiveView("dashboard")
   }
 
-  // Simulate QR code scanning (placeholder until real data is integrated)
   const handleScan = () => {
     setIsScanning(true)
     setTimeout(() => {
@@ -101,11 +99,34 @@ function App() {
     )
   }
 
+  // Enhanced function to handle notebook selection and addition
+  const handleNotebookSelect = (notebook) => {
+    setNotebooks((prev) => {
+      const exists = prev.find((nb) => nb.id === notebook.id)
+      if (!exists) {
+        return [...prev, notebook]
+      }
+      // Update existing notebook if it already exists
+      return prev.map((nb) => (nb.id === notebook.id ? notebook : nb))
+    })
+    setActiveNotebook(notebook)
+    setActiveView("notebookDetail")
+  }
+
+  // Function to delete notebook from state
+  const handleDeleteNotebook = (notebookId) => {
+    setNotebooks(notebooks.filter((nb) => nb.id !== notebookId))
+    // If the deleted notebook was active, go back to dashboard
+    if (activeNotebook && activeNotebook.id === notebookId) {
+      setActiveNotebook(null)
+      setActiveView("dashboard")
+    }
+  }
+
   const filteredNotebooks = notebooks.filter((notebook) =>
     notebook.title ? notebook.title.toLowerCase().includes(searchQuery.toLowerCase()) : false,
   )
 
-  // Render different views based on activeView state
   const renderContent = () => {
     if (!isAuthenticated) {
       return <LoginView onLogin={handleLogin} />
@@ -116,13 +137,14 @@ function App() {
         return (
           <DashboardView
             notebooks={filteredNotebooks}
-            onNotebookSelect={(notebook) => {
-              setActiveNotebook(notebook)
-              setActiveView("notebookDetail")
-            }}
+            onNotebookSelect={handleNotebookSelect}
             onScan={handleScan}
             searchQuery={searchQuery}
             setSearchQuery={setSearchQuery}
+            onDeleteNotebook={handleDeleteNotebook}
+            onToggleNotebookAccess={toggleNotebookAccess}
+            onShareNotebook={(notebook) => console.log("Sharing notebook:", notebook)}
+            user={user} // Pass user data to DashboardView
           />
         )
       case "notebookDetail":
@@ -180,7 +202,19 @@ function App() {
           />
         )
       default:
-        return <DashboardView notebooks={filteredNotebooks} />
+        return (
+          <DashboardView
+            notebooks={filteredNotebooks}
+            onNotebookSelect={handleNotebookSelect}
+            onScan={handleScan}
+            searchQuery={searchQuery}
+            setSearchQuery={setSearchQuery}
+            onDeleteNotebook={handleDeleteNotebook}
+            onToggleNotebookAccess={toggleNotebookAccess}
+            onShareNotebook={(notebook) => console.log("Sharing notebook:", notebook)}
+            user={user} // Pass user data to DashboardView
+          />
+        )
     }
   }
 

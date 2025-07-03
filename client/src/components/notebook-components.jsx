@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useRef, useEffect } from "react"
 import {
   FiBook,
   FiCamera,
@@ -17,13 +17,16 @@ import {
   FiEye,
   FiShield,
   FiCopy,
-  FiDownload, 
-  FiBookOpen
+  FiDownload,
+  FiBookOpen,
 } from "react-icons/fi"
 import { FoldersView } from "./FoldersView"
 import { ScanningOverlay, ScanResultModal } from "./modal-components"
 import { PageView } from "./page-components"
 import { SharedBooksView } from "./SharedBooksView"
+import QRCodeStyling from "qr-code-styling"
+import jsQR from "jsqr"
+import io from "socket.io-client"
 
 // Enhanced DashboardView component
 export function DashboardView({
@@ -35,6 +38,7 @@ export function DashboardView({
   onDeleteNotebook,
   onToggleNotebookAccess,
   onShareNotebook,
+  user, // Add user prop to get current user data
 }) {
   const [viewMode, setViewMode] = useState("grid")
   const [activeDropdown, setActiveDropdown] = useState(null)
@@ -49,12 +53,308 @@ export function DashboardView({
   const [pinInput, setPinInput] = useState("")
   const [showSharedBooksView, setShowSharedBooksView] = useState(false)
   const [currentFilter, setCurrentFilter] = useState("all")
-  const [showScanningOverlay, setShowScanningOverlay] = useState(false)
-  const [showScanResult, setShowScanResult] = useState(null)
+  const [showAdminView, setShowAdminView] = useState(false)
   const [showCreateBookModal, setShowCreateBookModal] = useState(false)
   const [newBookName, setNewBookName] = useState("")
+  const [qrId, setQrId] = useState(null)
+  const [qrData, setQrData] = useState(null)
+  const [qrImagePath, setQrImagePath] = useState(null)
+  const [savedQRs, setSavedQRs] = useState([])
+  const [networkIP, setNetworkIP] = useState("localhost")
+  const [scanResult, setScanResult] = useState("")
+  const [error, setError] = useState("")
+  const [loading, setLoading] = useState(false)
+  const [allBooks, setAllBooks] = useState([]) // Store all books from database
+  const videoRef = useRef(null)
+  const canvasRef = useRef(null)
+  const qrRef = useRef(null)
+  const socketRef = useRef(null)
 
-  // Folders management functions
+  // Initialize WebSocket
+  useEffect(() => {
+    const socketUrl = networkIP !== "localhost" ? `http://${networkIP}:5005` : "http://localhost:5005"
+    socketRef.current = io(socketUrl, {
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+    })
+
+    socketRef.current.on("connect", () => {
+      console.log("WebSocket connected:", socketRef.current.id)
+    })
+
+    socketRef.current.on("qrScanned", (data) => {
+      console.log("Received qrScanned event:", data)
+      setShowCreateBookModal(true)
+      setQrId(data.qrId)
+      setShowAdminView(false)
+    })
+
+    socketRef.current.on("bookCreated", (data) => {
+      console.log("Book created event:", data)
+      // Refresh the books list when a new book is created
+      loadAllBooks()
+    })
+
+    socketRef.current.on("connect_error", (err) => {
+      console.error("WebSocket connection error:", err.message)
+    })
+
+    socketRef.current.on("disconnect", () => {
+      console.log("WebSocket disconnected")
+    })
+
+    return () => {
+      socketRef.current.disconnect()
+      console.log("WebSocket cleanup")
+    }
+  }, [networkIP])
+
+  // Load all books from database on component mount
+  useEffect(() => {
+    loadAllBooks()
+  }, [])
+
+  // Load all books from the database
+  const loadAllBooks = async () => {
+    try {
+      setLoading(true)
+      const response = await fetch("http://localhost:5005/api/books/all", {
+        method: "GET",
+        headers: { "Content-Type": "application/json" },
+      })
+
+      if (response.ok) {
+        const books = await response.json()
+        console.log("Loaded books from database:", books)
+        setAllBooks(books)
+
+        // Update the notebooks prop with database books
+        const formattedBooks = books.map((book) => ({
+          id: book.id,
+          title: book.title,
+          isPublic: book.isPublic,
+          pages: book.pages || [],
+          totalPages: book.totalPages || 0,
+          lastUpdated: book.lastUpdated,
+          coverImage: book.coverImage,
+          qrId: book.qrId,
+          createdBy: book.createdBy,
+          qrCode: `/api/placeholder/40/40`, // Placeholder for QR code image
+        }))
+
+        // Call onNotebookSelect with all books to update parent state
+        formattedBooks.forEach((book) => {
+          onNotebookSelect(book)
+        })
+      } else {
+        console.error("Failed to load books:", response.statusText)
+      }
+    } catch (err) {
+      console.error("Error loading books:", err)
+      setError("Failed to load books from database")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const generateQRCode = async () => {
+    try {
+      console.log("Attempting to generate QR code...")
+      setError("")
+      setScanResult("")
+      const response = await fetch("http://localhost:5005/api/qr/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || `HTTP error! status: ${response.status}`)
+      }
+
+      const data = await response.json()
+      console.log("QR code response:", data)
+      const { qrId, qrUrl, networkIP: detectedIP, fileName, filePath } = data
+      setQrId(qrId)
+      setQrData(qrUrl)
+      setQrImagePath(filePath)
+      setNetworkIP(detectedIP || "localhost")
+
+      loadSavedQRs()
+
+      if (!qrRef.current) {
+        console.error("qrRef.current is null, cannot render QR code")
+        setError("Failed to render QR code: Container not found")
+        return
+      }
+
+      const qrCode = new QRCodeStyling({
+        width: 300,
+        height: 300,
+        data: qrUrl,
+        dotsOptions: { color: "#000000", type: "rounded" },
+        backgroundOptions: { color: "#ffffff" },
+        cornersSquareOptions: { color: "#000000", type: "extra-rounded" },
+        cornersDotOptions: { color: "#000000", type: "dot" },
+      })
+      qrRef.current.innerHTML = ""
+      qrCode.append(qrRef.current)
+      console.log("QR code appended to DOM")
+    } catch (err) {
+      console.error("Frontend QR generation error:", err.message)
+      setError(`Failed to generate QR code: ${err.message}`)
+    }
+  }
+
+  // Load saved QR codes
+  const loadSavedQRs = async () => {
+    try {
+      const response = await fetch("http://localhost:5005/api/qr/list")
+      if (response.ok) {
+        const qrList = await response.json()
+        setSavedQRs(qrList)
+      }
+    } catch (err) {
+      console.error("Error loading saved QRs:", err)
+    }
+  }
+
+  // Load saved QRs on component mount
+  useEffect(() => {
+    loadSavedQRs()
+  }, [])
+
+  // Start camera for scanning
+  const startCamera = async () => {
+    try {
+      console.log("Starting camera...")
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+      videoRef.current.srcObject = stream
+      videoRef.current.play()
+      scanQRCode()
+    } catch (err) {
+      console.error("Camera access error:", err)
+      setError("Failed to access camera")
+    }
+  }
+
+  // Scan QR code
+  const scanQRCode = () => {
+    const canvas = canvasRef.current
+    const video = videoRef.current
+    const context = canvas.getContext("2d")
+
+    const scan = () => {
+      if (video.readyState === video.HAVE_ENOUGH_DATA) {
+        canvas.height = 300
+        canvas.width = 300
+        context.drawImage(video, 0, 0, canvas.width, canvas.height)
+        const qrData = context.getImageData(0, 0, canvas.width, canvas.height)
+        const code = jsQR(qrData.data, qrData.width, qrData.height)
+        if (code) {
+          console.log("Scanned QR code:", code.data)
+          setScanResult(`Scanned QR ID: ${code.data.split("/").pop()}`)
+          stopCamera()
+        } else {
+          setScanResult("No QR code detected")
+        }
+      }
+      requestAnimationFrame(scan)
+    }
+
+    scan()
+  }
+
+  // Stop camera
+  const stopCamera = () => {
+    console.log("Stopping camera...")
+    if (videoRef.current && videoRef.current.srcObject) {
+      videoRef.current.srcObject.getTracks().forEach((track) => track.stop())
+    }
+  }
+
+  const handleDashboardScan = () => {
+    setShowAdminView(true)
+  }
+
+  const handleCreateBook = async () => {
+    if (newBookName.trim() && qrId && user) {
+      try {
+        setLoading(true)
+        setError("")
+
+        // Create book with user details, book details, and QR details
+        const response = await fetch(`http://localhost:5005/api/books/create/${qrId}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: newBookName.trim(),
+            userId: user.googleId || user.id, // Use user's Google ID
+            userName: user.name,
+            userEmail: user.email,
+            isPublic: false, // Default to private
+            pages: [],
+            coverImage: "/api/placeholder/400/200",
+            qrId: qrId, // Store QR ID with the book
+          }),
+        })
+
+        if (!response.ok) {
+          const errorData = await response.json()
+          throw new Error(errorData.error || `HTTP error! status: ${response.status}`)
+        }
+
+        const data = await response.json()
+        console.log("Book created successfully:", data)
+
+        // Format the new book for the frontend
+        const newBook = {
+          id: data.book.id,
+          title: data.book.title,
+          isPublic: data.book.isPublic,
+          pages: data.book.pages || [],
+          totalPages: data.book.totalPages || 0,
+          lastUpdated: data.book.lastUpdated || new Date().toISOString(),
+          coverImage: data.book.coverImage || "/api/placeholder/400/200",
+          qrId: data.book.qrId,
+          createdBy: data.book.createdBy,
+          qrCode: `/api/placeholder/40/40`, // Placeholder QR code image
+        }
+
+        // Add to notebooks and select it
+        onNotebookSelect(newBook)
+
+        // Reload all books to ensure we have the latest data
+        await loadAllBooks()
+
+        // Close modal and reset state
+        setShowCreateBookModal(false)
+        setNewBookName("")
+        setQrId(null)
+
+        alert("Notebook created successfully!")
+      } catch (err) {
+        console.error("Error creating book:", err)
+        setError(`Failed to create book: ${err.message}`)
+      } finally {
+        setLoading(false)
+      }
+    } else {
+      setError("Please provide a notebook name and ensure you are logged in")
+    }
+  }
+
+  // Rest of the component methods remain the same...
+  const formatUserAgent = (userAgent) => {
+    if (!userAgent) return "Unknown device"
+    if (userAgent.includes("iPhone")) return "📱 iPhone"
+    if (userAgent.includes("Android")) return "📱 Android"
+    if (userAgent.includes("iPad")) return "📱 iPad"
+    if (userAgent.includes("Mobile")) return "📱 Mobile Device"
+    return "💻 Desktop"
+  }
+
   const handleCreateFolder = (folderName) => {
     console.log("Creating folder:", folderName)
   }
@@ -104,9 +404,26 @@ export function DashboardView({
     setCurrentFilter(filter)
   }
 
-  const handleDeleteClick = (e, notebook) => {
+  const handleDeleteClick = async (e, notebook) => {
     e.stopPropagation()
-    setShowDeleteConfirm(notebook)
+    if (window.confirm(`Are you sure you want to delete "${notebook.title}"?`)) {
+      try {
+        const response = await fetch(`http://localhost:5005/api/books/${notebook.id}`, {
+          method: "DELETE",
+        })
+
+        if (response.ok) {
+          onDeleteNotebook(notebook.id)
+          await loadAllBooks() // Refresh the list
+          alert("Notebook deleted successfully")
+        } else {
+          throw new Error("Failed to delete notebook")
+        }
+      } catch (err) {
+        console.error("Error deleting notebook:", err)
+        alert("Failed to delete notebook")
+      }
+    }
     setActiveDropdown(null)
   }
 
@@ -128,32 +445,6 @@ export function DashboardView({
     } else {
       onToggleNotebookAccess(showAccessToggleConfirm.id)
       setShowAccessToggleConfirm(null)
-    }
-  }
-
-  const handleDashboardScan = () => {
-    setShowScanningOverlay(true)
-    setTimeout(() => {
-      setShowScanningOverlay(false)
-      setShowCreateBookModal(true)
-    }, 3000)
-  }
-
-  const handleCreateBook = () => {
-    if (newBookName.trim()) {
-      const newBook = {
-        id: Date.now(),
-        title: newBookName.trim(),
-        isPublic: true,
-        pages: [],
-        totalPages: 0,
-        lastUpdated: new Date(),
-        coverImage: "/api/placeholder/400/200",
-        qrId: null,
-      }
-      onNotebookSelect(newBook)
-      setShowCreateBookModal(false)
-      setNewBookName("")
     }
   }
 
@@ -202,19 +493,6 @@ export function DashboardView({
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
-  }
-
-  const handleShareEmail = (notebook) => {
-    const shareUrl = `https://notebook.app/share/${notebook.id}`
-    const subject = `Check out my notebook: ${notebook.title}`
-    const body = `I'd like to share my notebook "${notebook.title}" with you. You can view it here: ${shareUrl}`
-    window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
-  }
-
-  const handleShareSMS = (notebook) => {
-    const shareUrl = `https://notebook.app/share/${notebook.id}`
-    const message = `Check out my notebook "${notebook.title}": ${shareUrl}`
-    window.location.href = `sms:?body=${encodeURIComponent(message)}`
   }
 
   const handleOverlayClick = () => {
@@ -277,8 +555,167 @@ export function DashboardView({
     )
   }
 
+  if (showAdminView) {
+    return (
+      <div className="max-w-4xl mx-auto p-6 bg-white rounded-lg shadow-lg">
+        <button
+          onClick={() => setShowAdminView(false)}
+          className="flex items-center text-blue-600 hover:text-blue-800 mb-6"
+        >
+          <svg
+            className="w-4 h-4 mr-1"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+          Back to Dashboard
+        </button>
+
+        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+          <p className="text-sm text-blue-700">
+            <strong>Network:</strong> {networkIP !== "localhost" ? `${networkIP}:5005` : "localhost:5005"}
+            {networkIP !== "localhost" && <span className="ml-2 text-green-600">✅ Mobile devices can scan!</span>}
+          </p>
+        </div>
+
+        {savedQRs.length > 0 && (
+          <div className="mb-8">
+            <h2 className="text-xl font-semibold mb-4">Recently Generated QR Codes</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {savedQRs.slice(0, 6).map((qr) => (
+                <div key={qr.qrId} className="border rounded-lg p-4 bg-gray-50">
+                  <img
+                    src={`http://localhost:5005${qr.filePath}`}
+                    alt={`QR Code ${qr.qrId.substring(0, 8)}`}
+                    className="w-32 h-32 object-contain mx-auto mb-2 bg-white rounded border"
+                  />
+                  <div className="text-xs text-gray-600 space-y-1">
+                    <p>
+                      <strong>ID:</strong> {qr.qrId.substring(0, 8)}...
+                    </p>
+                    <p>
+                      <strong>Created:</strong> {new Date(qr.createdAt).toLocaleDateString()}
+                    </p>
+                    <p>
+                      <strong>Scans:</strong> {qr.scanCount}
+                    </p>
+                    {qr.lastScanned && (
+                      <p>
+                        <strong>Last Scan:</strong> {new Date(qr.lastScanned).toLocaleDateString()}
+                      </p>
+                    )}
+                  </div>
+                  <a
+                    href={`http://localhost:5005${qr.filePath}`}
+                    download
+                    className="block mt-2 text-center px-2 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600 transition-colors"
+                  >
+                    Download
+                  </a>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="mb-8">
+          <h2 className="text-xl font-semibold mb-6">Generate QR Code</h2>
+          <button
+            onClick={generateQRCode}
+            disabled={loading}
+            className="bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-4 rounded mb-4 transition-colors disabled:opacity-50"
+          >
+            {loading ? "Generating..." : "Generate New QR Code"}
+          </button>
+          <div>
+            {qrId && (
+              <p className="mb-2 text-gray-600">
+                QR Code ID: <code className="bg-gray-100 px-2 py-1 rounded">{qrId.substring(0, 8)}...</code>
+              </p>
+            )}
+
+            {qrImagePath ? (
+              <div className="mx-auto w-fit border-2 border-gray-200 rounded-lg p-4 bg-white">
+                <img
+                  src={`http://localhost:5005${qrImagePath}`}
+                  alt="Generated QR Code"
+                  className="w-80 h-80 object-contain"
+                />
+              </div>
+            ) : (
+              <div ref={qrRef} className="mx-auto w-fit border-2 border-gray-200 rounded-lg p-4 bg-white"></div>
+            )}
+            {qrData && (
+              <div className="mt-4 p-4 bg-gray-50 rounded-lg text-sm text-gray-700">
+                <p>
+                  <strong>QR URL:</strong> <code className="break-all">{qrData}</code>
+                </p>
+                {qrImagePath && (
+                  <div className="mt-2">
+                    <p>
+                      <strong>Saved as:</strong> <code>{qrImagePath}</code>
+                    </p>
+                    <a
+                      href={`http://localhost:5005${qrImagePath}`}
+                      download
+                      className="inline-block mt-2 px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
+                    >
+                      📥 Download JPG
+                    </a>
+                  </div>
+                )}
+                <div className="mt-3 p-3 bg-blue-50 border-l-4 border-blue-400">
+                  <p className="text-blue-700 font-medium">📱 Instructions:</p>
+                  <ul className="text-blue-600 text-xs mt-2 list-disc list-inside space-y-1">
+                    <li>Open any camera app on your mobile device</li>
+                    <li>Point the camera at this QR code</li>
+                    <li>Tap the notification/link that appears</li>
+                    <li>Follow prompts to create a new notebook</li>
+                  </ul>
+                </div>
+              </div>
+            )}
+          </div>
+          {error && (
+            <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded text-red-700">
+              <p>
+                <strong>Error:</strong> {error}
+              </p>
+            </div>
+          )}
+        </div>
+
+        <div>
+          <h2 className="text-xl font-semibold mb-4">Local QR Scanner (Testing)</h2>
+          <div className="space-x-2 mb-4">
+            <button
+              onClick={startCamera}
+              className="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded transition-colors"
+            >
+              Start Camera
+            </button>
+            <button
+              onClick={stopCamera}
+              className="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded transition-colors"
+            >
+              Stop Camera
+            </button>
+          </div>
+          <div className="relative">
+            <video ref={videoRef} className="w-full max-w-md mx-auto mb-4 rounded border-2 border-gray-300" />
+            <canvas ref={canvasRef} className="hidden" />
+          </div>
+          {scanResult && <p className="text-center mt-2 p-2 bg-gray-100 rounded text-gray-700">{scanResult}</p>}
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <div className="relative">
+    <div className="">
       {(activeDropdown || showMainMenu) && <div className="fixed inset-0 z-10" onClick={handleOverlayClick} />}
 
       <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-8">
@@ -345,7 +782,7 @@ export function DashboardView({
             >
               <FiCamera className="mr-2" />
               <span className="hidden sm:inline">Scan QR Code</span>
-              <span className Argument="sm-hidden">Scan QR Code</span>
+              <span className="sm:hidden">Scan QR Code</span>
             </button>
 
             <div className="flex gap-2">
@@ -366,7 +803,14 @@ export function DashboardView({
         </div>
       </div>
 
-      {filteredNotebooks.length === 0 ? (
+      {loading && (
+        <div className="text-center py-8">
+          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+          <p className="mt-2 text-gray-600">Loading notebooks...</p>
+        </div>
+      )}
+
+      {!loading && filteredNotebooks.length === 0 ? (
         <div className="bg-white rounded-lg shadow-md p-8 text-center">
           <div className="flex justify-center mb-4">
             <FiBook className="text-gray-400 text-5xl" />
@@ -381,19 +825,19 @@ export function DashboardView({
           <p className="text-gray-600 mb-6">
             {currentFilter === "all"
               ? "You don't have any notebooks yet. Scan a QR code to get started."
-            : currentFilter === "private"
-              ? "You don't have any private notebooks yet."
-              : "You don't have any public notebooks yet."}
+              : currentFilter === "private"
+                ? "You don't have any private notebooks yet."
+                : "You don't have any public notebooks yet."}
           </p>
           <button
-            onClick={onScan}
-            className="inline-flex items-center items-center justify-center bg-blue-600 text-white rounded-lg px-4 py-2 hover:bg-blue-700 transition duration-150"
+            onClick={handleDashboardScan}
+            className="inline-flex items-center justify-center bg-blue-600 text-white rounded-lg px-4 py-2 hover:bg-blue-700 transition duration-150"
           >
             <FiCamera className="mr-2" />
             Scan QR Code
           </button>
         </div>
-      ) : viewMode === "grid" ? (
+      ) : !loading && viewMode === "grid" ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredNotebooks.map((notebook) => (
             <div
@@ -401,7 +845,7 @@ export function DashboardView({
               className="bg-white rounded-lg shadow-md hover:shadow-lg transition duration-150 cursor-pointer relative"
               onClick={() => onNotebookSelect(notebook)}
             >
-              <div className="h-48 overflow-hidden">
+              <div className="h-40 overflow-hidden">
                 <img
                   src={notebook.coverImage || "/api/placeholder/400/200"}
                   alt={notebook.title}
@@ -490,90 +934,136 @@ export function DashboardView({
           ))}
         </div>
       ) : (
-        <div className="space-y-2">
-          {filteredNotebooks.map((notebook) => (
-            <div
-              key={notebook.id}
-              className="bg-white rounded-lg shadow-sm overflow-hidden hover:bg-gray-50 transition duration-150 cursor-pointer flex relative"
-              onClick={() => onNotebookSelect(notebook)}
-            >
-              <div className="w-16 h-16 overflow-hidden">
-                <img
-                  src={notebook.coverImage || "/api/placeholder/64/64"}
-                  alt={notebook.title}
-                  className="w-full h-full object-cover"
-                />
-              </div>
-              <div className="flex-1 p-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-medium text-gray-800 flex items-center flex-1 truncate">
-                    {notebook.title}
-                    <button
-                      onClick={(e) => handleLockIconClick(e, notebook)}
-                      className="p-1 ml-2 hover:bg-gray-100 rounded transition-colors flex-shrink-0"
-                    >
-                      {notebook.isPublic ? (
-                        <FiUnlock className="text-green-500" size={14} />
-                      ) : (
-                        <FiLock className="text-red-500" size={14} />
-                      )}
-                    </button>
-                  </h3>
-
-                  <div className="flex items-center gap-2">
-                    <button onClick={(e) => handleQRClick(e, notebook)} className="hover:opacity-80 transition-opacity">
-                      <img src={notebook.qrCode || "/api/placeholder/24/24"} alt="QR Code" className="w-6 h-6" />
-                    </button>
-
-                    <div className="relative">
+        !loading && (
+          <div className="space-y-2">
+            {filteredNotebooks.map((notebook) => (
+              <div
+                key={notebook.id}
+                className="bg-white rounded-lg shadow-sm overflow-hidden hover:bg-gray-50 transition duration-150 cursor-pointer flex relative"
+                onClick={() => onNotebookSelect(notebook)}
+              >
+                <div className="w-16 h-16 overflow-hidden">
+                  <img
+                    src={notebook.coverImage || "/api/placeholder/64/64"}
+                    alt={notebook.title}
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+                <div className="flex-1 p-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-medium text-gray-800 flex items-center flex-1 truncate">
+                      {notebook.title}
                       <button
-                        onClick={(e) => handleNotebookMenuClick(e, notebook.id)}
-                        className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors"
+                        onClick={(e) => handleLockIconClick(e, notebook)}
+                        className="p-1 ml-2 hover:bg-gray-100 rounded transition-colors flex-shrink-0"
                       >
-                        <FiMoreVertical size={16} />
+                        {notebook.isPublic ? (
+                          <FiUnlock className="text-green-500" size={14} />
+                        ) : (
+                          <FiLock className="text-red-500" size={14} />
+                        )}
+                      </button>
+                    </h3>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={(e) => handleQRClick(e, notebook)}
+                        className="hover:opacity-80 transition-opacity"
+                      >
+                        <img src={notebook.qrCode || "/api/placeholder/24/24"} alt="QR Code" className="w-6 h-6" />
                       </button>
 
-                      {activeDropdown === notebook.id && (
-                        <div className="absolute right-0 top-full mt-1 w-44 bg-white rounded-lg shadow-lg border border-gray-200 z-30">
-                          <button
-                            onClick={(e) => handleShareClick(e, notebook)}
-                            className="w-full flex items-center px-3 py-2 text-left hover:bg-gray-50 transition-colors border-b border-gray-100"
-                          >
-                            <FiShare2 className="mr-2 text-blue-600" size={14} />
-                            <span className="text-sm text-gray-700">Share</span>
-                          </button>
+                      <div className="relative">
+                        <button
+                          onClick={(e) => handleNotebookMenuClick(e, notebook.id)}
+                          className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors"
+                        >
+                          <FiMoreVertical size={16} />
+                        </button>
 
-                          {!notebook.isPublic && notebook.pin && (
+                        {activeDropdown === notebook.id && (
+                          <div className="absolute right-0 top-full mt-1 w-44 bg-white rounded-lg shadow-lg border border-gray-200 z-30">
                             <button
-                              onClick={(e) => handleShowPinClick(e, notebook)}
+                              onClick={(e) => handleShareClick(e, notebook)}
                               className="w-full flex items-center px-3 py-2 text-left hover:bg-gray-50 transition-colors border-b border-gray-100"
                             >
-                              <FiEye className="mr-2 text-green-600" size={14} />
-                              <span className="text-sm text-gray-700">Show 4-digit Code</span>
+                              <FiShare2 className="mr-2 text-blue-600" size={14} />
+                              <span className="text-sm text-gray-700">Share</span>
                             </button>
-                          )}
 
-                          <button
-                            onClick={(e) => handleDeleteClick(e, notebook)}
-                            className="w-full flex items-center px-3 py-2 text-left hover:bg-gray-50 transition-colors rounded-b-lg"
-                          >
-                            <FiTrash2 className="mr-2 text-red-600" size={14} />
-                            <span className="text-sm text-gray-700">Delete</span>
-                          </button>
-                        </div>
-                      )}
+                            {!notebook.isPublic && notebook.pin && (
+                              <button
+                                onClick={(e) => handleShowPinClick(e, notebook)}
+                                className="w-full flex items-center px-3 py-2 text-left hover:bg-gray-50 transition-colors border-b border-gray-100"
+                              >
+                                <FiEye className="mr-2 text-green-600" size={14} />
+                                <span className="text-sm text-gray-700">Show 4-digit Code</span>
+                              </button>
+                            )}
+
+                            <button
+                              onClick={(e) => handleDeleteClick(e, notebook)}
+                              className="w-full flex items-center px-3 py-2 text-left hover:bg-gray-50 transition-colors rounded-b-lg"
+                            >
+                              <FiTrash2 className="mr-2 text-red-600" size={14} />
+                              <span className="text-sm text-gray-700">Delete</span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-                <div className="text-xs text-gray-500 mt-1">
-                  {notebook.totalPages} pages • Last updated: {new Date(notebook.lastUpdated).toLocaleDateString()}
+                  <div className="text-xs text-gray-500 mt-1">
+                    {notebook.totalPages} pages • Last updated: {new Date(notebook.lastUpdated).toLocaleDateString()}
+                  </div>
                 </div>
               </div>
+            ))}
+          </div>
+        )
+      )}
+
+      {/* Create Book Modal */}
+      {showCreateBookModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg p-6 w-full max-w-sm">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Create New Notebook</h3>
+            <p className="text-sm text-gray-600 mb-4">QR Code scanned! Enter a name for your new notebook.</p>
+            <input
+              type="text"
+              value={newBookName}
+              onChange={(e) => setNewBookName(e.target.value)}
+              placeholder="Enter notebook name"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent mb-6"
+              autoFocus
+            />
+            {error && <p className="text-red-600 text-sm mb-4">{error}</p>}
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setShowCreateBookModal(false)
+                  setNewBookName("")
+                  setError("")
+                  setQrId(null)
+                }}
+                disabled={loading}
+                className="flex-1 px-4 py-2 text-gray-700 bg-gray-200 rounded-lg hover:bg-gray-300 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreateBook}
+                disabled={loading || !newBookName.trim()}
+                className="flex-1 px-4 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+              >
+                {loading ? "Creating..." : "Create & View"}
+              </button>
             </div>
-          ))}
+          </div>
         </div>
       )}
 
+      {/* Other modals remain the same... */}
       {showPinEntry && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg p-6 w-full max-w-sm">
@@ -771,47 +1261,11 @@ export function DashboardView({
           </div>
         </div>
       )}
-
-      {showScanningOverlay && <ScanningOverlay onClose={() => setShowScanningOverlay(false)} />}
-
-      {showCreateBookModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg p-6 w-full max-w-sm">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Create New Notebook</h3>
-            <input
-              type="text"
-              value={newBookName}
-              onChange={(e) => setNewBookName(e.target.value)}
-              placeholder="Enter notebook name"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent mb-6"
-              autoFocus
-            />
-            <div className="flex gap-3">
-              <button
-                onClick={() => {
-                  setShowCreateBookModal(false)
-                  setNewBookName("")
-                }}
-                className="flex-1 px-4 py-2 text-gray-700 bg-gray-200 rounded-lg hover:bg-gray-300 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleCreateBook}
-                className="flex-1 px-4 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
-              >
-                Create & View
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
 
-
-// NotebookDetailView component
+// NotebookDetailView component remains the same...
 export function NotebookDetailView({
   notebook,
   onBack,
@@ -913,8 +1367,6 @@ export function NotebookDetailView({
         setShowScanResult(null)
 
         onPageSelect(newPage)
-
-        // TODO: Call backend to persist new page (e.g., POST /api/books/:bookId/pages)
       } catch (err) {
         console.error("Error adding new page:", err)
         alert("Failed to add new page")
@@ -939,10 +1391,7 @@ export function NotebookDetailView({
   return (
     <div className="relative max-w-4xl mx-auto px-4 py-6 bg-gray-50 min-h-screen">
       {activePageDropdown && <div className="fixed inset-0 z-10" onClick={handleOverlayClick} />}
-      <button
-        onClick={onBack}
-        className="flex items-center text-blue-600 hover:text-blue-800 mb-6"
-      >
+      <button onClick={onBack} className="flex items-center text-blue-600 hover:text-blue-800 mb-6">
         <svg
           className="w-4 h-4 mr-1"
           fill="none"
@@ -967,9 +1416,7 @@ export function NotebookDetailView({
               <h2 className="text-2xl font-bold text-white mb-2">{notebook?.title || "Untitled Notebook"}</h2>
               <div className="flex items-center text-white/80 text-sm">
                 <span className="mr-4">{notebook?.totalPages || 0} pages</span>
-                <span>
-                  Last updated: {new Date(notebook?.lastUpdated || Date.now()).toLocaleDateString()}
-                </span>
+                <span>Last updated: {new Date(notebook?.lastUpdated || Date.now()).toLocaleDateString()}</span>
               </div>
             </div>
           </div>
@@ -1014,18 +1461,12 @@ export function NotebookDetailView({
                       placeholder="4-digit PIN"
                       className="w-24 px-2 py-1 border border-gray-300 rounded-md mr-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
-                    <button
-                      onClick={handlePinUpdate}
-                      className="text-blue-600 hover:text-blue-800"
-                    >
+                    <button onClick={handlePinUpdate} className="text-blue-600 hover:text-blue-800">
                       <FiCheck />
                     </button>
                   </div>
                 ) : (
-                  <button
-                    onClick={() => setShowPinInput(true)}
-                    className="text-blue-600 hover:text-blue-800 text-sm"
-                  >
+                  <button onClick={() => setShowPinInput(true)} className="text-blue-600 hover:text-blue-800 text-sm">
                     {notebook?.pin ? "Change PIN" : "Set PIN"}
                   </button>
                 )}
@@ -1153,9 +1594,7 @@ export function NotebookDetailView({
                 <div className="flex items-center justify-between mb-2">
                   <span className="font-medium text-gray-800">Page {page.pageNumber}</span>
                   <div className="flex items-center gap-2">
-                    <span className="text-sm text-gray-500">
-                      {new Date(page.lastUpdated).toLocaleDateString()}
-                    </span>
+                    <span className="text-sm text-gray-500">{new Date(page.lastUpdated).toLocaleDateString()}</span>
                     <div className="relative">
                       <button
                         onClick={(e) => handlePageMenuClick(e, page.pageNumber)}
@@ -1206,10 +1645,7 @@ export function NotebookDetailView({
                 {page.tags?.length > 0 && (
                   <div className="flex flex-wrap gap-1 mt-2">
                     {page.tags.map((tag, index) => (
-                      <span
-                        key={index}
-                        className="px-2 py-0.5 bg-blue-100 text-blue-800 rounded-full text-xs"
-                      >
+                      <span key={index} className="px-2 py-0.5 bg-blue-100 text-blue-800 rounded-full text-xs">
                         {tag}
                       </span>
                     ))}
@@ -1243,9 +1679,7 @@ export function NotebookDetailView({
                   <div className="flex items-center justify-between">
                     <h3 className="font-medium text-gray-800">Page {page.pageNumber}</h3>
                     <div className="flex items-center gap-2">
-                      <span className="text-xs text-gray-500">
-                        {new Date(page.lastUpdated).toLocaleDateString()}
-                      </span>
+                      <span className="text-xs text-gray-500">{new Date(page.lastUpdated).toLocaleDateString()}</span>
                       <div className="relative">
                         <button
                           onClick={(e) => handlePageMenuClick(e, page.pageNumber)}
@@ -1296,10 +1730,7 @@ export function NotebookDetailView({
                   {page.tags?.length > 0 && (
                     <div className="flex flex-wrap gap-1 mt-1">
                       {page.tags.slice(0, 3).map((tag, index) => (
-                        <span
-                          key={index}
-                          className="px-2 py-0.5 bg-blue-100 text-blue-800 rounded-full text-xs"
-                        >
+                        <span key={index} className="px-2 py-0.5 bg-blue-100 text-blue-800 rounded-full text-xs">
                           {tag}
                         </span>
                       ))}
@@ -1320,12 +1751,8 @@ export function NotebookDetailView({
       {showMovePageModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg p-6 w-full max-w-md">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">
-              Move Page {showMovePageModal.pageNumber}
-            </h3>
-            <p className="text-gray-600 text-sm mb-4">
-              Enter the new page number to move this page to:
-            </p>
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Move Page {showMovePageModal.pageNumber}</h3>
+            <p className="text-gray-600 text-sm mb-4">Enter the new page number to move this page to:</p>
             <input
               type="number"
               value={moveToPageNumber}
@@ -1365,11 +1792,7 @@ export function NotebookDetailView({
       )}
 
       {showPageView && selectedPage && (
-        <PageView
-          notebook={notebook}
-          page={selectedPage}
-          onBack={() => setShowPageView(false)}
-        />
+        <PageView notebook={notebook} page={selectedPage} onBack={() => setShowPageView(false)} />
       )}
     </div>
   )
