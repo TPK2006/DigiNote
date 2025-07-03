@@ -28,7 +28,6 @@ import QRCodeStyling from "qr-code-styling"
 import jsQR from "jsqr"
 import io from "socket.io-client"
 
-// Enhanced DashboardView component
 export function DashboardView({
   notebooks,
   onNotebookSelect,
@@ -38,7 +37,7 @@ export function DashboardView({
   onDeleteNotebook,
   onToggleNotebookAccess,
   onShareNotebook,
-  user, // Add user prop to get current user data
+  user,
 }) {
   const [viewMode, setViewMode] = useState("grid")
   const [activeDropdown, setActiveDropdown] = useState(null)
@@ -55,6 +54,7 @@ export function DashboardView({
   const [currentFilter, setCurrentFilter] = useState("all")
   const [showAdminView, setShowAdminView] = useState(false)
   const [showCreateBookModal, setShowCreateBookModal] = useState(false)
+  const [showBookExistsModal, setShowBookExistsModal] = useState(false)
   const [newBookName, setNewBookName] = useState("")
   const [qrId, setQrId] = useState(null)
   const [qrData, setQrData] = useState(null)
@@ -64,13 +64,13 @@ export function DashboardView({
   const [scanResult, setScanResult] = useState("")
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
-  const [allBooks, setAllBooks] = useState([]) // Store all books from database
+  const [allBooks, setAllBooks] = useState([])
+  const [qrCodeImages, setQrCodeImages] = useState({}) // New state to store QR code images
   const videoRef = useRef(null)
   const canvasRef = useRef(null)
   const qrRef = useRef(null)
   const socketRef = useRef(null)
 
-  // Initialize WebSocket
   useEffect(() => {
     const socketUrl = networkIP !== "localhost" ? `http://${networkIP}:5005` : "http://localhost:5005"
     socketRef.current = io(socketUrl, {
@@ -83,16 +83,49 @@ export function DashboardView({
       console.log("WebSocket connected:", socketRef.current.id)
     })
 
-    socketRef.current.on("qrScanned", (data) => {
+    socketRef.current.on("qrScanned", async (data) => {
       console.log("Received qrScanned event:", data)
-      setShowCreateBookModal(true)
       setQrId(data.qrId)
       setShowAdminView(false)
+
+      try {
+        const response = await fetch(`http://localhost:5005/api/books/qr/${data.qrId}`, {
+          method: "GET",
+          headers: { "Content-Type": "application/json" },
+        })
+
+        if (response.ok) {
+          const book = await response.json()
+          if (book) {
+            setShowBookExistsModal(true)
+            const formattedBook = {
+              id: book.id,
+              title: book.title,
+              isPublic: book.isPublic,
+              pages: book.pages || [],
+              totalPages: book.totalPages || 0,
+              lastUpdated: book.lastUpdated,
+              coverImage: book.coverImage,
+              qrId: book.qrId,
+              createdBy: book.createdBy,
+              qrCode: qrCodeImages[book.qrId] || `/api/placeholder/40/40`,
+            }
+            onNotebookSelect(formattedBook)
+          } else {
+            setShowCreateBookModal(true)
+          }
+        } else {
+          console.error("Failed to check book existence:", response.statusText)
+          setError("Failed to verify QR code")
+        }
+      } catch (err) {
+        console.error("Error checking book existence:", err)
+        setError("Failed to verify QR code")
+      }
     })
 
     socketRef.current.on("bookCreated", (data) => {
       console.log("Book created event:", data)
-      // Refresh the books list when a new book is created
       loadAllBooks()
     })
 
@@ -108,14 +141,32 @@ export function DashboardView({
       socketRef.current.disconnect()
       console.log("WebSocket cleanup")
     }
-  }, [networkIP])
+  }, [networkIP, onNotebookSelect])
 
-  // Load all books from database on component mount
   useEffect(() => {
     loadAllBooks()
+    loadQRCodeImages() // Load QR code images when component mounts
   }, [])
 
-  // Load all books from the database
+  // New function to load QR code images
+  const loadQRCodeImages = async () => {
+    try {
+      const response = await fetch("http://localhost:5005/api/qr/list")
+      if (response.ok) {
+        const qrList = await response.json()
+        const qrImageMap = {}
+        qrList.forEach((qr) => {
+          // Extract QR ID from the URL or use the qrId directly
+          qrImageMap[qr.qrId] = `http://localhost:5005${qr.filePath}`
+        })
+        setQrCodeImages(qrImageMap)
+        console.log("Loaded QR code images:", qrImageMap)
+      }
+    } catch (err) {
+      console.error("Error loading QR code images:", err)
+    }
+  }
+
   const loadAllBooks = async () => {
     try {
       setLoading(true)
@@ -129,7 +180,6 @@ export function DashboardView({
         console.log("Loaded books from database:", books)
         setAllBooks(books)
 
-        // Update the notebooks prop with database books
         const formattedBooks = books.map((book) => ({
           id: book.id,
           title: book.title,
@@ -140,10 +190,9 @@ export function DashboardView({
           coverImage: book.coverImage,
           qrId: book.qrId,
           createdBy: book.createdBy,
-          qrCode: `/api/placeholder/40/40`, // Placeholder for QR code image
+          qrCode: qrCodeImages[book.qrId] || `/api/placeholder/40/40`, // Use actual QR code image
         }))
 
-        // Call onNotebookSelect with all books to update parent state
         formattedBooks.forEach((book) => {
           onNotebookSelect(book)
         })
@@ -157,6 +206,18 @@ export function DashboardView({
       setLoading(false)
     }
   }
+
+  // Update notebooks when QR code images are loaded
+  useEffect(() => {
+    if (Object.keys(qrCodeImages).length > 0 && notebooks.length > 0) {
+      // Update existing notebooks with QR code images
+      notebooks.forEach((notebook) => {
+        if (notebook.qrId && qrCodeImages[notebook.qrId]) {
+          notebook.qrCode = qrCodeImages[notebook.qrId]
+        }
+      })
+    }
+  }, [qrCodeImages, notebooks])
 
   const generateQRCode = async () => {
     try {
@@ -180,6 +241,12 @@ export function DashboardView({
       setQrData(qrUrl)
       setQrImagePath(filePath)
       setNetworkIP(detectedIP || "localhost")
+
+      // Update QR code images state
+      setQrCodeImages((prev) => ({
+        ...prev,
+        [qrId]: `http://localhost:5005${filePath}`,
+      }))
 
       loadSavedQRs()
 
@@ -207,25 +274,28 @@ export function DashboardView({
     }
   }
 
-  // Load saved QR codes
   const loadSavedQRs = async () => {
     try {
       const response = await fetch("http://localhost:5005/api/qr/list")
       if (response.ok) {
         const qrList = await response.json()
         setSavedQRs(qrList)
+        // Also update QR code images when loading saved QRs
+        const qrImageMap = {}
+        qrList.forEach((qr) => {
+          qrImageMap[qr.qrId] = `http://localhost:5005${qr.filePath}`
+        })
+        setQrCodeImages((prev) => ({ ...prev, ...qrImageMap }))
       }
     } catch (err) {
       console.error("Error loading saved QRs:", err)
     }
   }
 
-  // Load saved QRs on component mount
   useEffect(() => {
     loadSavedQRs()
   }, [])
 
-  // Start camera for scanning
   const startCamera = async () => {
     try {
       console.log("Starting camera...")
@@ -239,7 +309,6 @@ export function DashboardView({
     }
   }
 
-  // Scan QR code
   const scanQRCode = () => {
     const canvas = canvasRef.current
     const video = videoRef.current
@@ -266,7 +335,6 @@ export function DashboardView({
     scan()
   }
 
-  // Stop camera
   const stopCamera = () => {
     console.log("Stopping camera...")
     if (videoRef.current && videoRef.current.srcObject) {
@@ -284,19 +352,18 @@ export function DashboardView({
         setLoading(true)
         setError("")
 
-        // Create book with user details, book details, and QR details
         const response = await fetch(`http://localhost:5005/api/books/create/${qrId}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             title: newBookName.trim(),
-            userId: user.googleId || user.id, // Use user's Google ID
+            userId: user.googleId || user.id,
             userName: user.name,
             userEmail: user.email,
-            isPublic: false, // Default to private
+            isPublic: false,
             pages: [],
             coverImage: "/api/placeholder/400/200",
-            qrId: qrId, // Store QR ID with the book
+            qrId: qrId,
           }),
         })
 
@@ -308,7 +375,6 @@ export function DashboardView({
         const data = await response.json()
         console.log("Book created successfully:", data)
 
-        // Format the new book for the frontend
         const newBook = {
           id: data.book.id,
           title: data.book.title,
@@ -319,16 +385,12 @@ export function DashboardView({
           coverImage: data.book.coverImage || "/api/placeholder/400/200",
           qrId: data.book.qrId,
           createdBy: data.book.createdBy,
-          qrCode: `/api/placeholder/40/40`, // Placeholder QR code image
+          qrCode: qrCodeImages[data.book.qrId] || `/api/placeholder/40/40`, // Use actual QR code
         }
 
-        // Add to notebooks and select it
         onNotebookSelect(newBook)
-
-        // Reload all books to ensure we have the latest data
         await loadAllBooks()
-
-        // Close modal and reset state
+        await loadQRCodeImages() // Reload QR code images
         setShowCreateBookModal(false)
         setNewBookName("")
         setQrId(null)
@@ -345,7 +407,6 @@ export function DashboardView({
     }
   }
 
-  // Rest of the component methods remain the same...
   const formatUserAgent = (userAgent) => {
     if (!userAgent) return "Unknown device"
     if (userAgent.includes("iPhone")) return "📱 iPhone"
@@ -414,7 +475,7 @@ export function DashboardView({
 
         if (response.ok) {
           onDeleteNotebook(notebook.id)
-          await loadAllBooks() // Refresh the list
+          await loadAllBooks()
           alert("Notebook deleted successfully")
         } else {
           throw new Error("Failed to delete notebook")
@@ -671,7 +732,7 @@ export function DashboardView({
                   <p className="text-blue-700 font-medium">📱 Instructions:</p>
                   <ul className="text-blue-600 text-xs mt-2 list-disc list-inside space-y-1">
                     <li>Open any camera app on your mobile device</li>
-                    <li>Point the camera at this QR code</li>
+                    <li>Point the camera at the QR code</li>
                     <li>Tap the notification/link that appears</li>
                     <li>Follow prompts to create a new notebook</li>
                   </ul>
@@ -916,7 +977,15 @@ export function DashboardView({
                 <div className="flex justify-between items-center mt-4">
                   <div className="flex">
                     <button onClick={(e) => handleQRClick(e, notebook)} className="hover:opacity-80 transition-opacity">
-                      <img src={notebook.qrCode || "/api/placeholder/40/40"} alt="QR Code" className="w-10 h-10" />
+                      <img
+                        src={notebook.qrCode || "/api/placeholder/40/40"}
+                        alt="QR Code"
+                        className="w-10 h-10 border border-gray-200 rounded"
+                        onError={(e) => {
+                          // Fallback to placeholder if QR code image fails to load
+                          e.target.src = "/api/placeholder/40/40"
+                        }}
+                      />
                     </button>
                   </div>
                   <button
@@ -970,7 +1039,15 @@ export function DashboardView({
                         onClick={(e) => handleQRClick(e, notebook)}
                         className="hover:opacity-80 transition-opacity"
                       >
-                        <img src={notebook.qrCode || "/api/placeholder/24/24"} alt="QR Code" className="w-6 h-6" />
+                        <img
+                          src={notebook.qrCode || "/api/placeholder/24/24"}
+                          alt="QR Code"
+                          className="w-6 h-6 border border-gray-200 rounded"
+                          onError={(e) => {
+                            // Fallback to placeholder if QR code image fails to load
+                            e.target.src = "/api/placeholder/24/24"
+                          }}
+                        />
                       </button>
 
                       <div className="relative">
@@ -1023,7 +1100,6 @@ export function DashboardView({
         )
       )}
 
-      {/* Create Book Modal */}
       {showCreateBookModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg p-6 w-full max-w-sm">
@@ -1063,7 +1139,37 @@ export function DashboardView({
         </div>
       )}
 
-      {/* Other modals remain the same... */}
+      {showBookExistsModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg p-6 w-full max-w-sm">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Book Already Exists</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              A notebook is already associated with this QR code. You can view it in your dashboard.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setShowBookExistsModal(false)
+                  setQrId(null)
+                }}
+                className="flex-1 px-4 py-2 text-gray-700 bg-gray-200 rounded-lg hover:bg-gray-300 transition-colors"
+              >
+                Close
+              </button>
+              <button
+                onClick={() => {
+                  setShowBookExistsModal(false)
+                  setQrId(null)
+                }}
+                className="flex-1 px-4 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                Go to Dashboard
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showPinEntry && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-lg p-6 w-full max-w-sm">
@@ -1132,6 +1238,10 @@ export function DashboardView({
                       src={showSharePopup.qrCode || "/api/placeholder/150/150"}
                       alt="QR Code"
                       className="w-32 h-32 mx-auto"
+                      onError={(e) => {
+                        // Fallback to placeholder if QR code image fails to load
+                        e.target.src = "/api/placeholder/150/150"
+                      }}
                     />
                   </div>
                   <button
@@ -1265,7 +1375,6 @@ export function DashboardView({
   )
 }
 
-// NotebookDetailView component remains the same...
 export function NotebookDetailView({
   notebook,
   onBack,
@@ -1276,6 +1385,7 @@ export function NotebookDetailView({
   onSharePage,
   onMovePage,
   onScan,
+  onNotebookSelect,
 }) {
   const [newPin, setNewPin] = useState("")
   const [showPinInput, setShowPinInput] = useState(false)
@@ -1288,6 +1398,71 @@ export function NotebookDetailView({
   const [selectedPage, setSelectedPage] = useState(null)
   const [showScanningOverlay, setShowScanningOverlay] = useState(false)
   const [showScanResult, setShowScanResult] = useState(null)
+  const [error, setError] = useState("")
+  const videoRef = useRef(null)
+  const canvasRef = useRef(null)
+  const socketRef = useRef(null)
+
+  useEffect(() => {
+    socketRef.current = io("http://localhost:5005", {
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+    })
+
+    socketRef.current.on("connect", () => {
+      console.log("WebSocket connected for NotebookDetailView:", socketRef.current.id)
+    })
+
+    socketRef.current.on("qrScanned", async (data) => {
+      console.log("Received qrScanned event in NotebookDetailView:", data)
+      setShowScanningOverlay(false)
+      try {
+        const response = await fetch(`http://localhost:5005/api/books/qr/${data.qrId}`, {
+          method: "GET",
+          headers: { "Content-Type": "application/json" },
+        })
+
+        if (response.ok) {
+          const book = await response.json()
+          if (book && book.id !== notebook.id) {
+            setShowScanResult({
+              qrId: data.qrId,
+              message: "This QR code is associated with another notebook.",
+              isExistingBook: true,
+            })
+          } else {
+            const newPageNumber = (notebook?.pages?.length || 0) + 1
+            setShowScanResult({
+              qrId: data.qrId,
+              pageNumber: newPageNumber,
+              isExistingBook: false,
+            })
+          }
+        } else {
+          console.error("Failed to check book existence:", response.statusText)
+          setError("Failed to verify QR code")
+        }
+      } catch (err) {
+        console.error("Error checking book existence:", err)
+        setError("Failed to verify QR code")
+      }
+    })
+
+    socketRef.current.on("connect_error", (err) => {
+      console.error("WebSocket connection error:", err.message)
+      setError("Failed to connect to server")
+    })
+
+    socketRef.current.on("disconnect", () => {
+      console.log("WebSocket disconnected")
+    })
+
+    return () => {
+      socketRef.current.disconnect()
+      console.log("WebSocket cleanup for NotebookDetailView")
+    }
+  }, [notebook])
 
   const handlePinUpdate = () => {
     if (newPin.length === 4 && /^\d+$/.test(newPin)) {
@@ -1312,7 +1487,9 @@ export function NotebookDetailView({
 
   const handleDeletePageClick = (e, page) => {
     e.stopPropagation()
-    onDeletePage(page.pageNumber)
+    if (window.confirm(`Are you sure you want to delete Page ${page.pageNumber}?`)) {
+      onDeletePage(page.pageNumber)
+    }
     setActivePageDropdown(null)
   }
 
@@ -1323,7 +1500,7 @@ export function NotebookDetailView({
   }
 
   const handleMovePageConfirm = () => {
-    if (moveToPageNumber && !isNaN(moveToPageNumber)) {
+    if (moveToPageNumber && !isNaN(moveToPageNumber) && moveToPageNumber > 0) {
       onMovePage(showMovePageModal.pageNumber, Number.parseInt(moveToPageNumber))
       setShowMovePageModal(null)
       setMoveToPageNumber("")
@@ -1332,20 +1509,58 @@ export function NotebookDetailView({
     }
   }
 
+  const startCamera = async () => {
+    try {
+      console.log("Starting camera for page scan...")
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+      videoRef.current.srcObject = stream
+      videoRef.current.play()
+      scanQRCode()
+    } catch (err) {
+      console.error("Camera access error:", err)
+      setError("Failed to access camera")
+    }
+  }
+
+  const scanQRCode = () => {
+    const canvas = canvasRef.current
+    const video = videoRef.current
+    const context = canvas.getContext("2d")
+
+    const scan = () => {
+      if (video.readyState === video.HAVE_ENOUGH_DATA) {
+        canvas.height = 300
+        canvas.width = 300
+        context.drawImage(video, 0, 0, canvas.width, canvas.height)
+        const qrData = context.getImageData(0, 0, canvas.width, canvas.height)
+        const code = jsQR(qrData.data, qrData.width, qrData.height)
+        if (code) {
+          console.log("Scanned QR code:", code.data)
+          socketRef.current.emit("qrScanned", { qrId: code.data.split("/").pop() })
+          stopCamera()
+        }
+      }
+      requestAnimationFrame(scan)
+    }
+
+    scan()
+  }
+
+  const stopCamera = () => {
+    console.log("Stopping camera...")
+    if (videoRef.current && videoRef.current.srcObject) {
+      videoRef.current.srcObject.getTracks().forEach((track) => track.stop())
+    }
+  }
+
   const handleNotebookDetailScan = () => {
     setShowScanningOverlay(true)
-    setTimeout(() => {
-      setShowScanningOverlay(false)
-      const mockResult = {
-        pageNumber: (notebook?.pages?.length || 0) + 1,
-        qrId: notebook?.qrId,
-      }
-      setShowScanResult(mockResult)
-    }, 3000)
+    setError("")
+    startCamera()
   }
 
   const handleScanResultConfirm = async () => {
-    if (showScanResult) {
+    if (showScanResult && !showScanResult.isExistingBook) {
       try {
         const newPage = {
           pageNumber: showScanResult.pageNumber,
@@ -1362,20 +1577,36 @@ export function NotebookDetailView({
           lastUpdated: new Date(),
         }
 
+        // Update backend
+        const response = await fetch(`http://localhost:5005/api/books/${notebook.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(updatedNotebook),
+        })
+
+        if (!response.ok) {
+          throw new Error("Failed to update notebook with new page")
+        }
+
         setSelectedPage(newPage)
         setShowPageView(true)
         setShowScanResult(null)
-
         onPageSelect(newPage)
+
+        // Notify parent component of updated notebook
+        onNotebookSelect(updatedNotebook)
       } catch (err) {
         console.error("Error adding new page:", err)
-        alert("Failed to add new page")
+        setError("Failed to add new page")
       }
+    } else {
+      setShowScanResult(null)
     }
   }
 
   const handleScanResultCancel = () => {
     setShowScanResult(null)
+    setError("")
   }
 
   const handleOverlayClick = () => {
@@ -1492,7 +1723,7 @@ export function NotebookDetailView({
         className="w-full flex items-center justify-center bg-blue-600 text-white rounded-lg px-4 py-3 hover:bg-blue-700 transition duration-150 mb-6"
       >
         <FiCamera className="mr-2" size={18} />
-        <span className="font-medium">Scan QR Code</span>
+        <span className="font-medium">Scan QR Code to Add Page</span>
       </button>
 
       <div className="mb-6">
@@ -1556,13 +1787,25 @@ export function NotebookDetailView({
 
       <h3 className="text-xl font-semibold text-gray-800 mb-4">Pages ({filteredPages.length})</h3>
 
+      {error && (
+        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-red-700">
+          <p>
+            <strong>Error:</strong> {error}
+          </p>
+        </div>
+      )}
+
       {filteredPages.length === 0 ? (
         <div className="bg-white rounded-lg shadow-md p-8 text-center">
           <div className="flex justify-center mb-4">
-            <FiBook className="text-gray-400 text-5xl" />
+            <FiBookOpen className="text-gray-400 text-5xl" />
           </div>
-          <h3 className="text-xl font-medium text-gray-800 mb-2">No Pages Found</h3>
-          <p className="text-gray-600 mb-6">Scan a QR code to add pages to this notebook.</p>
+          <h3 className="text-xl font-semibold text-gray-800 mb-2">No Pages Found</h3>
+          <p className="text-gray-600 mb-6">
+            {selectedTag
+              ? `No pages found with the tag "${selectedTag}".`
+              : "This notebook doesn't have any pages yet. Scan a QR code to add a new page."}
+          </p>
           <button
             onClick={handleNotebookDetailScan}
             className="inline-flex items-center justify-center bg-blue-600 text-white rounded-lg px-4 py-2 hover:bg-blue-700 transition duration-150"
@@ -1572,11 +1815,11 @@ export function NotebookDetailView({
           </button>
         </div>
       ) : viewMode === "grid" ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredPages.map((page) => (
             <div
               key={page.pageNumber}
-              className="bg-white rounded-lg shadow overflow-hidden cursor-pointer hover:shadow-md transition duration-150 relative"
+              className="bg-white rounded-lg shadow-md hover:shadow-lg transition duration-150 cursor-pointer relative"
               onClick={() => {
                 setSelectedPage(page)
                 setShowPageView(true)
@@ -1592,65 +1835,45 @@ export function NotebookDetailView({
               </div>
               <div className="p-4">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="font-medium text-gray-800">Page {page.pageNumber}</span>
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-gray-500">{new Date(page.lastUpdated).toLocaleDateString()}</span>
-                    <div className="relative">
-                      <button
-                        onClick={(e) => handlePageMenuClick(e, page.pageNumber)}
-                        className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors"
-                      >
-                        <FiMoreVertical size={16} />
-                      </button>
-                      {activePageDropdown === page.pageNumber && (
-                        <div className="absolute right-0 top-full mt-2 w-40 bg-white rounded-lg shadow-lg border border-gray-200 z-50">
-                          <button
-                            onClick={(e) => handleMovePageClick(e, page)}
-                            className="w-full flex items-center px-3 py-2 text-left hover:bg-gray-50 transition-colors border-b border-gray-100"
-                          >
-                            <svg
-                              className="mr-2 w-4 h-4 text-blue-600"
-                              fill="none"
-                              stroke="currentColor"
-                              viewBox="0 0 24 24"
-                            >
-                              <path
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                strokeWidth={2}
-                                d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"
-                              />
-                            </svg>
-                            <span className="text-sm text-gray-700">Move to</span>
-                          </button>
-                          <button
-                            onClick={(e) => handleSharePageClick(e, page)}
-                            className="w-full flex items-center px-3 py-2 text-left hover:bg-gray-50 transition-colors border-b border-gray-100"
-                          >
-                            <FiShare2 className="mr-2 text-green-600" size={14} />
-                            <span className="text-sm text-gray-700">Share</span>
-                          </button>
-                          <button
-                            onClick={(e) => handleDeletePageClick(e, page)}
-                            className="w-full flex items-center px-3 py-2 text-left hover:bg-gray-50 transition-colors rounded-b-lg"
-                          >
-                            <FiTrash2 className="mr-2 text-red-600" size={14} />
-                            <span className="text-sm text-gray-700">Delete</span>
-                          </button>
-                        </div>
-                      )}
-                    </div>
+                  <h4 className="text-lg font-semibold text-gray-800">Page {page.pageNumber}</h4>
+                  <div className="relative">
+                    <button
+                      onClick={(e) => handlePageMenuClick(e, page.pageNumber)}
+                      className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors"
+                    >
+                      <FiMoreVertical size={16} />
+                    </button>
+                    {activePageDropdown === page.pageNumber && (
+                      <div className="absolute right-0 top-full mt-1 w-44 bg-white rounded-lg shadow-lg border border-gray-200 z-30">
+                        <button
+                          onClick={(e) => handleSharePageClick(e, page)}
+                          className="w-full flex items-center px-3 py-2 text-left hover:bg-gray-50 transition-colors border-b border-gray-100"
+                        >
+                          <FiShare2 className="mr-2 text-blue-600" size={14} />
+                          <span className="text-sm text-gray-700">Share Page</span>
+                        </button>
+                        <button
+                          onClick={(e) => handleMovePageClick(e, page)}
+                          className="w-full flex items-center px-3 py-2 text-left hover:bg-gray-50 transition-colors border-b border-gray-100"
+                        >
+                          <FiBook className="mr-2 text-blue-600" size={14} />
+                          <span className="text-sm text-gray-700">Move Page</span>
+                        </button>
+                        <button
+                          onClick={(e) => handleDeletePageClick(e, page)}
+                          className="w-full flex items-center px-3 py-2 text-left hover:bg-gray-50 transition-colors rounded-b-lg"
+                        >
+                          <FiTrash2 className="mr-2 text-red-600" size={14} />
+                          <span className="text-sm text-gray-700">Delete Page</span>
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
-                {page.tags?.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mt-2">
-                    {page.tags.map((tag, index) => (
-                      <span key={index} className="px-2 py-0.5 bg-blue-100 text-blue-800 rounded-full text-xs">
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
-                )}
+                <div className="text-sm text-gray-500 mb-3">
+                  <span className="mr-4">{page.tags.join(", ") || "No tags"}</span>
+                  <span>Last updated: {new Date(page.lastUpdated).toLocaleDateString()}</span>
+                </div>
               </div>
             </div>
           ))}
@@ -1660,87 +1883,59 @@ export function NotebookDetailView({
           {filteredPages.map((page) => (
             <div
               key={page.pageNumber}
-              className="bg-white rounded-lg shadow-sm overflow-hidden hover:bg-gray-50 transition duration-150 cursor-pointer relative"
+              className="bg-white rounded-lg shadow-sm overflow-hidden hover:bg-gray-50 transition duration-150 cursor-pointer flex relative"
               onClick={() => {
                 setSelectedPage(page)
                 setShowPageView(true)
                 onPageSelect(page)
               }}
             >
-              <div className="flex items-center p-3">
-                <div className="w-12 h-12 rounded overflow-hidden mr-3">
-                  <img
-                    src={page.imageUrl || "/api/placeholder/40/40"}
-                    alt={`Page ${page.pageNumber}`}
-                    className="w-full h-full object-cover"
-                  />
-                </div>
-                <div className="flex-1">
-                  <div className="flex items-center justify-between">
-                    <h3 className="font-medium text-gray-800">Page {page.pageNumber}</h3>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-gray-500">{new Date(page.lastUpdated).toLocaleDateString()}</span>
-                      <div className="relative">
+              <div className="w-16 h-16 overflow-hidden">
+                <img
+                  src={page.imageUrl || "/api/placeholder/64/64"}
+                  alt={`Page ${page.pageNumber}`}
+                  className="w-full h-full object-cover"
+                />
+              </div>
+              <div className="flex-1 p-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-medium text-gray-800">Page {page.pageNumber}</h4>
+                  <div className="relative">
+                    <button
+                      onClick={(e) => handlePageMenuClick(e, page.pageNumber)}
+                      className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors"
+                    >
+                      <FiMoreVertical size={16} />
+                    </button>
+                    {activePageDropdown === page.pageNumber && (
+                      <div className="absolute right-0 top-full mt-1 w-44 bg-white rounded-lg shadow-lg border border-gray-200 z-30">
                         <button
-                          onClick={(e) => handlePageMenuClick(e, page.pageNumber)}
-                          className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors"
+                          onClick={(e) => handleSharePageClick(e, page)}
+                          className="w-full flex items-center px-3 py-2 text-left hover:bg-gray-50 transition-colors border-b border-gray-100"
                         >
-                          <FiMoreVertical size={16} />
+                          <FiShare2 className="mr-2 text-blue-600" size={14} />
+                          <span className="text-sm text-gray-700">Share Page</span>
                         </button>
-                        {activePageDropdown === page.pageNumber && (
-                          <div className="absolute right-0 top-full mt-2 w-40 bg-white rounded-lg shadow-lg border border-gray-200 z-50">
-                            <button
-                              onClick={(e) => handleMovePageClick(e, page)}
-                              className="w-full flex items-center px-3 py-2 text-left hover:bg-gray-50 transition-colors border-b border-gray-100"
-                            >
-                              <svg
-                                className="mr-2 w-4 h-4 text-blue-600"
-                                fill="none"
-                                stroke="currentColor"
-                                viewBox="0 0 24 24"
-                              >
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  strokeWidth={2}
-                                  d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"
-                                />
-                              </svg>
-                              <span className="text-sm text-gray-700">Move to</span>
-                            </button>
-                            <button
-                              onClick={(e) => handleSharePageClick(e, page)}
-                              className="w-full flex items-center px-3 py-2 text-left hover:bg-gray-50 transition-colors border-b border-gray-100"
-                            >
-                              <FiShare2 className="mr-2 text-green-600" size={14} />
-                              <span className="text-sm text-gray-700">Share</span>
-                            </button>
-                            <button
-                              onClick={(e) => handleDeletePageClick(e, page)}
-                              className="w-full flex items-center px-3 py-2 text-left hover:bg-gray-50 transition-colors rounded-b-lg"
-                            >
-                              <FiTrash2 className="mr-2 text-red-600" size={14} />
-                              <span className="text-sm text-gray-700">Delete</span>
-                            </button>
-                          </div>
-                        )}
+                        <button
+                          onClick={(e) => handleMovePageClick(e, page)}
+                          className="w-full flex items-center px-3 py-2 text-left hover:bg-gray-50 transition-colors border-b border-gray-100"
+                        >
+                          <FiBook className="mr-2 text-blue-600" size={14} />
+                          <span className="text-sm text-gray-700">Move Page</span>
+                        </button>
+                        <button
+                          onClick={(e) => handleDeletePageClick(e, page)}
+                          className="w-full flex items-center px-3 py-2 text-left hover:bg-gray-50 transition-colors rounded-b-lg"
+                        >
+                          <FiTrash2 className="mr-2 text-red-600" size={14} />
+                          <span className="text-sm text-gray-700">Delete Page</span>
+                        </button>
                       </div>
-                    </div>
+                    )}
                   </div>
-                  {page.tags?.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {page.tags.slice(0, 3).map((tag, index) => (
-                        <span key={index} className="px-2 py-0.5 bg-blue-100 text-blue-800 rounded-full text-xs">
-                          {tag}
-                        </span>
-                      ))}
-                      {page.tags.length > 3 && (
-                        <span className="px-2 py-0.5 bg-gray-100 text-gray-800 rounded-full text-xs">
-                          +{page.tags.length - 3}
-                        </span>
-                      )}
-                    </div>
-                  )}
+                </div>
+                <div className="text-xs text-gray-500 mt-1">
+                  {page.tags.join(", ") || "No tags"} • Last updated: {new Date(page.lastUpdated).toLocaleDateString()}
                 </div>
               </div>
             </div>
@@ -1750,15 +1945,17 @@ export function NotebookDetailView({
 
       {showMovePageModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg p-6 w-full max-w-md">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Move Page {showMovePageModal.pageNumber}</h3>
-            <p className="text-gray-600 text-sm mb-4">Enter the new page number to move this page to:</p>
+          <div className="bg-white rounded-lg p-6 w-full max-w-sm">
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Move Page</h3>
+            <p className="text-gray-600 mb-4">
+              Move page {showMovePageModal.pageNumber} to a new position in "{notebook.title}".
+            </p>
             <input
               type="number"
               value={moveToPageNumber}
               onChange={(e) => setMoveToPageNumber(e.target.value)}
-              placeholder="Enter page number"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 mb-6"
+              placeholder="Enter new page number"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent mb-6"
             />
             <div className="flex gap-3">
               <button
@@ -1781,7 +1978,14 @@ export function NotebookDetailView({
         </div>
       )}
 
-      {showScanningOverlay && <ScanningOverlay onClose={handleScanResultCancel} />}
+      {showScanningOverlay && (
+        <ScanningOverlay
+          onClose={() => {
+            setShowScanningOverlay(false)
+            stopCamera()
+          }}
+        />
+      )}
 
       {showScanResult && (
         <ScanResultModal
@@ -1792,7 +1996,21 @@ export function NotebookDetailView({
       )}
 
       {showPageView && selectedPage && (
-        <PageView notebook={notebook} page={selectedPage} onBack={() => setShowPageView(false)} />
+        <PageView
+          notebook={notebook}
+          page={selectedPage}
+          onBack={() => setShowPageView(false)}
+          onAddTag={(tag) => {
+            const updatedPage = { ...selectedPage, tags: [...selectedPage.tags, tag] }
+            setSelectedPage(updatedPage)
+            onPageSelect(updatedPage)
+          }}
+          onAddNote={(note) => {
+            const updatedPage = { ...selectedPage, notes: note }
+            setSelectedPage(updatedPage)
+            onPageSelect(updatedPage)
+          }}
+        />
       )}
     </div>
   )

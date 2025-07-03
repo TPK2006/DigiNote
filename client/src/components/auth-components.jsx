@@ -22,24 +22,24 @@ const NotificationView = ({ onClose }) => (
 export function LoginView({ onLogin }) {
   const [isGoogleLoaded, setIsGoogleLoaded] = useState(false)
   const [error, setError] = useState(null)
-  const [debugInfo, setDebugInfo] = useState('')
+  const [debugInfo, setDebugInfo] = useState("")
 
   useEffect(() => {
     setDebugInfo(`Current origin: ${window.location.origin}`)
-    
+
     const loadGoogleScript = () => {
       if (window.google) {
         initializeGoogleSignIn()
         return
       }
 
-      const script = document.createElement('script')
-      script.src = 'https://accounts.google.com/gsi/client'
+      const script = document.createElement("script")
+      script.src = "https://accounts.google.com/gsi/client"
       script.async = true
       script.defer = true
       script.onload = initializeGoogleSignIn
       script.onerror = () => {
-        setError('Failed to load Google Sign-In script')
+        setError("Failed to load Google Sign-In script")
       }
       document.head.appendChild(script)
     }
@@ -48,21 +48,21 @@ export function LoginView({ onLogin }) {
       try {
         if (window.google && window.google.accounts) {
           window.google.accounts.id.initialize({
-            client_id: '320764355400-n0c4d90n2lhn9nf1se5vh8oqqtjbmbhc.apps.googleusercontent.com',
+            client_id: "320764355400-n0c4d90n2lhn9nf1se5vh8oqqtjbmbhc.apps.googleusercontent.com",
             callback: handleGoogleSignIn,
             auto_select: false,
             cancel_on_tap_outside: true,
             use_fedcm_for_prompt: false,
-            itp_support: true
+            itp_support: true,
           })
           setIsGoogleLoaded(true)
           setError(null)
         } else {
-          setError('Google Sign-In API not available')
+          setError("Google Sign-In API not available")
         }
       } catch (err) {
-        console.error('Google Sign-In initialization error:', err)
-        setError('Failed to initialize Google Sign-In: ' + err.message)
+        console.error("Google Sign-In initialization error:", err)
+        setError("Failed to initialize Google Sign-In: " + err.message)
       }
     }
 
@@ -71,25 +71,25 @@ export function LoginView({ onLogin }) {
 
   const handleGoogleSignIn = async (response) => {
     try {
-      console.log('Google Sign-In response:', response)
-      const payload = JSON.parse(atob(response.credential.split('.')[1]))
-      console.log('Decoded payload:', payload)
-      
+      console.log("Google Sign-In response:", response)
+      const payload = JSON.parse(atob(response.credential.split(".")[1]))
+      console.log("Decoded payload:", payload)
+
       const userData = {
         id: payload.sub,
         name: payload.name,
         email: payload.email,
         profilePicture: payload.picture,
-        googleId: payload.sub
+        googleId: payload.sub,
       }
 
       try {
-        const response = await fetch('http://localhost:5005/api/save-user', {
-          method: 'POST',
+        const response = await fetch("http://localhost:5005/api/save-user", {
+          method: "POST",
           headers: {
-            'Content-Type': 'application/json',
+            "Content-Type": "application/json",
           },
-          body: JSON.stringify(userData)
+          body: JSON.stringify(userData),
         })
 
         if (!response.ok) {
@@ -97,64 +97,64 @@ export function LoginView({ onLogin }) {
         }
 
         const result = await response.json()
-        console.log('User data saved:', result)
+        console.log("User data saved:", result)
 
         const adjustedUser = {
           ...result.user,
-          profilePicturePath: `/components/${result.user.googleId}.jpg`
+          profilePicturePath: `http://localhost:5005/components/${result.user.googleId}.jpg`,
         }
         onLogin(adjustedUser)
       } catch (error) {
-        console.error('Error saving user data to backend:', error)
-        setError('Failed to save user data: ' + error.message)
+        console.error("Error saving user data to backend:", error)
+        setError("Failed to save user data: " + error.message)
         // Proceed with login using Google data
-        userData.profilePicturePath = `/components/${userData.googleId}.jpg`
+        userData.profilePicturePath = `http://localhost:5005/components/${userData.googleId}.jpg`
         onLogin(userData)
       }
     } catch (error) {
-      console.error('Error processing Google Sign-In:', error)
-      setError('Sign-in failed: ' + error.message)
+      console.error("Error processing Google Sign-In:", error)
+      setError("Sign-in failed: " + error.message)
     }
   }
 
   const handleGoogleSignInClick = () => {
     if (!window.google) {
-      setError('Google Sign-In not loaded')
+      setError("Google Sign-In not loaded")
       return
     }
 
     if (!isGoogleLoaded) {
-      setError('Google Sign-In not initialized')
+      setError("Google Sign-In not initialized")
       return
     }
 
     try {
       setError(null)
-      
-      const tempDiv = document.createElement('div')
-      tempDiv.style.position = 'fixed'
-      tempDiv.style.top = '-1000px'
-      tempDiv.style.left = '-1000px'
+
+      const tempDiv = document.createElement("div")
+      tempDiv.style.position = "fixed"
+      tempDiv.style.top = "-1000px"
+      tempDiv.style.left = "-1000px"
       document.body.appendChild(tempDiv)
-      
+
       window.google.accounts.id.renderButton(tempDiv, {
-        theme: 'outline',
-        size: 'large',
+        theme: "outline",
+        size: "large",
         width: 250,
         click_listener: () => {
           window.google.accounts.id.prompt((notification) => {
-            console.log('Prompt notification:', notification)
+            console.log("Prompt notification:", notification)
             if (notification.isNotDisplayed()) {
-              console.log('Not displayed reason:', notification.getNotDisplayedReason())
+              console.log("Not displayed reason:", notification.getNotDisplayedReason())
               tryPopupSignIn()
             } else if (notification.isSkippedMoment()) {
-              console.log('Skipped reason:', notification.getSkippedReason())
+              console.log("Skipped reason:", notification.getSkippedReason())
               tryPopupSignIn()
             }
           })
-        }
+        },
       })
-      
+
       setTimeout(() => {
         const button = tempDiv.querySelector('div[role="button"]')
         if (button) {
@@ -164,21 +164,21 @@ export function LoginView({ onLogin }) {
         }
         document.body.removeChild(tempDiv)
       }, 100)
-      
     } catch (err) {
-      console.error('Error showing Google Sign-In prompt:', err)
-      setError('Failed to show sign-in prompt: ' + err.message)
+      console.error("Error showing Google Sign-In prompt:", err)
+      setError("Failed to show sign-in prompt: " + err.message)
       tryPopupSignIn()
     }
   }
 
   const tryPopupSignIn = () => {
     try {
-      const clientId = '1091796067911-9ob10a9epuuvj6ol9mjsj79i7fhk9e12.apps.googleusercontent.com'
+      const clientId = "1091796067911-9ob10a9epuuvj6ol9mjsj79i7fhk9e12.apps.googleusercontent.com"
       const redirectUri = window.location.origin
-      const scope = 'openid profile email'
-      
-      const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
+      const scope = "openid profile email"
+
+      const authUrl =
+        `https://accounts.google.com/o/oauth2/v2/auth?` +
         `client_id=${clientId}&` +
         `redirect_uri=${encodeURIComponent(redirectUri)}&` +
         `response_type=token&` +
@@ -186,20 +186,19 @@ export function LoginView({ onLogin }) {
         `include_granted_scopes=true&` +
         `state=popup`
 
-      const popup = window.open(authUrl, 'google-signin', 'width=500,height=600,scrollbars=yes,resizable=yes')
-      
+      const popup = window.open(authUrl, "google-signin", "width=500,height=600,scrollbars=yes,resizable=yes")
+
       const checkClosed = setInterval(() => {
         if (popup.closed) {
           clearInterval(checkClosed)
-          setError('Sign-in popup was closed')
+          setError("Sign-in popup was closed")
         }
       }, 1000)
 
-      setError('Popup sign-in opened. Complete sign-in in the popup window.')
-      
+      setError("Popup sign-in opened. Complete sign-in in the popup window.")
     } catch (err) {
-      console.error('Popup sign-in error:', err)
-      setError('All sign-in methods failed.')
+      console.error("Popup sign-in error:", err)
+      setError("All sign-in methods failed.")
     }
   }
 
@@ -219,25 +218,15 @@ export function LoginView({ onLogin }) {
             The cloud-connected platform for your physical notebooks. Scan, store, and share your notes securely.
           </p>
 
-          {debugInfo && (
-            <div className="mb-4 p-3 bg-blue-50 rounded-lg text-xs text-blue-700">
-              {debugInfo}
-            </div>
-          )}
+          {debugInfo && <div className="mb-4 p-3 bg-blue-50 rounded-lg text-xs text-blue-700">{debugInfo}</div>}
 
-          {error && (
-            <div className="mb-4 p-3 bg-red-50 rounded-lg text-sm text-red-700">
-              {error}
-            </div>
-          )}
+          {error && <div className="mb-4 p-3 bg-red-50 rounded-lg text-sm text-red-700">{error}</div>}
 
           <button
             onClick={handleGoogleSignInClick}
             disabled={!isGoogleLoaded}
             className={`w-full flex items-center justify-center border border-gray-300 rounded-lg py-3 px-4 text-gray-700 transition duration-150 mb-3 ${
-              isGoogleLoaded 
-                ? 'bg-white hover:bg-gray-50 cursor-pointer' 
-                : 'bg-gray-100 cursor-not-allowed opacity-60'
+              isGoogleLoaded ? "bg-white hover:bg-gray-50 cursor-pointer" : "bg-gray-100 cursor-not-allowed opacity-60"
             }`}
           >
             <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24">
@@ -258,7 +247,7 @@ export function LoginView({ onLogin }) {
                 fill="#EA4335"
               />
             </svg>
-            {isGoogleLoaded ? 'Sign in with Google' : 'Loading Google Sign-In...'}
+            {isGoogleLoaded ? "Sign in with Google" : "Loading Google Sign-In..."}
           </button>
 
           <div className="mt-8 text-center">
@@ -308,10 +297,48 @@ export function LoginView({ onLogin }) {
 // Header Component with Sidebar and Full-Screen Notifications
 export function Header({ user, onLogout, isMobileMenuOpen, setIsMobileMenuOpen, activeView, setActiveView }) {
   const [showNotifications, setShowNotifications] = useState(false)
+  const [profileImages, setProfileImages] = useState({}) // New state to store profile images
 
   useEffect(() => {
-    console.log('Header received user:', user)
+    console.log("Header received user:", user)
+    if (user) {
+      loadProfileImages()
+    }
   }, [user])
+
+  // New function to load profile images
+  const loadProfileImages = async () => {
+    if (!user?.googleId) return
+
+    try {
+      // Try to load the profile image from the backend
+      const imageUrl = `http://localhost:5005/components/${user.googleId}.jpg`
+
+      // Test if the image exists by creating a new Image object
+      const img = new Image()
+      img.onload = () => {
+        setProfileImages((prev) => ({
+          ...prev,
+          [user.googleId]: imageUrl,
+        }))
+        console.log("Profile image loaded successfully:", imageUrl)
+      }
+      img.onerror = () => {
+        console.log("Profile image not found, using fallback")
+        setProfileImages((prev) => ({
+          ...prev,
+          [user.googleId]: "/placeholder.svg",
+        }))
+      }
+      img.src = imageUrl
+    } catch (err) {
+      console.error("Error loading profile image:", err)
+      setProfileImages((prev) => ({
+        ...prev,
+        [user.googleId]: "/placeholder.svg",
+      }))
+    }
+  }
 
   const toggleSidebar = () => {
     setIsMobileMenuOpen(!isMobileMenuOpen)
@@ -325,6 +352,14 @@ export function Header({ user, onLogout, isMobileMenuOpen, setIsMobileMenuOpen, 
 
   const handleCloseNotifications = () => {
     setShowNotifications(false)
+  }
+
+  // Get the profile image URL with fallback
+  const getProfileImageUrl = () => {
+    if (user?.googleId && profileImages[user.googleId]) {
+      return profileImages[user.googleId]
+    }
+    return user?.profilePicturePath || "/placeholder.svg"
   }
 
   return (
@@ -353,11 +388,15 @@ export function Header({ user, onLogout, isMobileMenuOpen, setIsMobileMenuOpen, 
 
               <div className="flex items-center ml-6">
                 <img
-                  src={user?.profilePicturePath || "/placeholder.svg"}
-                  alt={user?.name || 'Unknown User'}
+                  src={getProfileImageUrl() || "/placeholder.svg"}
+                  alt={user?.name || "Unknown User"}
                   className="w-8 h-8 rounded-full mr-2"
+                  onError={(e) => {
+                    // Fallback to placeholder if profile image fails to load
+                    e.target.src = "/placeholder.svg"
+                  }}
                 />
-                <span className="text-sm font-medium text-gray-700">{user?.name || 'Unknown User'}</span>
+                <span className="text-sm font-medium text-gray-700">{user?.name || "Unknown User"}</span>
                 <button onClick={onLogout} className="ml-4 text-sm text-gray-600 hover:text-red-600">
                   <FiLogOut />
                 </button>
@@ -386,13 +425,17 @@ export function Header({ user, onLogout, isMobileMenuOpen, setIsMobileMenuOpen, 
         <div className="p-4">
           <div className="flex items-center mb-6">
             <img
-              src={user?.profilePicturePath || "/placeholder.svg"}
-              alt={user?.name || 'Unknown User'}
+              src={getProfileImageUrl() || "/placeholder.svg"}
+              alt={user?.name || "Unknown User"}
               className="w-10 h-10 rounded-full mr-3"
+              onError={(e) => {
+                // Fallback to placeholder if profile image fails to load
+                e.target.src = "/placeholder.svg"
+              }}
             />
             <div>
-              <p className="text-sm font-medium text-gray-800">{user?.name || 'Unknown User'}</p>
-              <p className="text-xs text-gray-500">{user?.email || 'No email available'}</p>
+              <p className="text-sm font-medium text-gray-800">{user?.name || "Unknown User"}</p>
+              <p className="text-xs text-gray-500">{user?.email || "No email available"}</p>
             </div>
           </div>
 
@@ -403,9 +446,7 @@ export function Header({ user, onLogout, isMobileMenuOpen, setIsMobileMenuOpen, 
                 setIsMobileMenuOpen(false)
               }}
               className={`w-full text-left py-2 px-3 rounded-lg font-medium transition-colors ${
-                activeView === "dashboard"
-                  ? "bg-blue-100 text-blue-600"
-                  : "text-gray-600 hover:bg-gray-100"
+                activeView === "dashboard" ? "bg-blue-100 text-blue-600" : "text-gray-600 hover:bg-gray-100"
               }`}
             >
               Dashboard
@@ -416,9 +457,7 @@ export function Header({ user, onLogout, isMobileMenuOpen, setIsMobileMenuOpen, 
                 setIsMobileMenuOpen(false)
               }}
               className={`w-full text-left py-2 px-3 rounded-lg font-medium transition-colors ${
-                activeView === "orderPortal"
-                  ? "bg-blue-100 text-blue-600"
-                  : "text-gray-600 hover:bg-gray-100"
+                activeView === "orderPortal" ? "bg-blue-100 text-blue-600" : "text-gray-600 hover:bg-gray-100"
               }`}
             >
               Order Notebooks
@@ -445,10 +484,7 @@ export function Header({ user, onLogout, isMobileMenuOpen, setIsMobileMenuOpen, 
       </div>
 
       {isMobileMenuOpen && (
-        <div
-          className="fixed inset-0 bg-black bg-opacity-50 z-40 md:hidden"
-          onClick={toggleSidebar}
-        />
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-40 md:hidden" onClick={toggleSidebar} />
       )}
 
       {showNotifications && (

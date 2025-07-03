@@ -1,7 +1,6 @@
-// App.jsx
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Header, LoginView } from "./components/auth-components"
 import { DashboardView, NotebookDetailView } from "./components/notebook-components"
 import { PageView, OrderPortalView } from "./components/page-components"
@@ -25,6 +24,43 @@ function App() {
     contactEmail: "",
     contactPhone: "",
   })
+
+  // Fetch user books on login
+  useEffect(() => {
+    if (isAuthenticated && user) {
+      const fetchUserBooks = async () => {
+        try {
+          const response = await fetch(`http://localhost:5005/api/books/user/${user.googleId}`, {
+            method: "GET",
+            headers: { "Content-Type": "application/json" },
+          })
+
+          if (response.ok) {
+            const books = await response.json()
+            console.log("Fetched user books:", books)
+            setNotebooks(books.map(book => ({
+              id: book.id,
+              title: book.title,
+              isPublic: book.isPublic,
+              pages: book.pages || [],
+              totalPages: book.totalPages || 0,
+              lastUpdated: book.lastUpdated,
+              coverImage: book.coverImage,
+              qrId: book.qrId,
+              createdBy: book.createdBy,
+              qrCode: `/api/placeholder/40/40`,
+            })))
+          } else {
+            console.error("Failed to fetch user books:", response.statusText)
+          }
+        } catch (err) {
+          console.error("Error fetching user books:", err)
+        }
+      }
+
+      fetchUserBooks()
+    }
+  }, [isAuthenticated, user])
 
   const handleLogin = (userData) => {
     console.log("App.jsx handleLogin:", userData)
@@ -99,24 +135,20 @@ function App() {
     )
   }
 
-  // Enhanced function to handle notebook selection and addition
   const handleNotebookSelect = (notebook) => {
     setNotebooks((prev) => {
       const exists = prev.find((nb) => nb.id === notebook.id)
       if (!exists) {
         return [...prev, notebook]
       }
-      // Update existing notebook if it already exists
       return prev.map((nb) => (nb.id === notebook.id ? notebook : nb))
     })
     setActiveNotebook(notebook)
     setActiveView("notebookDetail")
   }
 
-  // Function to delete notebook from state
   const handleDeleteNotebook = (notebookId) => {
     setNotebooks(notebooks.filter((nb) => nb.id !== notebookId))
-    // If the deleted notebook was active, go back to dashboard
     if (activeNotebook && activeNotebook.id === notebookId) {
       setActiveNotebook(null)
       setActiveView("dashboard")
@@ -144,7 +176,7 @@ function App() {
             onDeleteNotebook={handleDeleteNotebook}
             onToggleNotebookAccess={toggleNotebookAccess}
             onShareNotebook={(notebook) => console.log("Sharing notebook:", notebook)}
-            user={user} // Pass user data to DashboardView
+            user={user}
           />
         )
       case "notebookDetail":
@@ -212,7 +244,7 @@ function App() {
             onDeleteNotebook={handleDeleteNotebook}
             onToggleNotebookAccess={toggleNotebookAccess}
             onShareNotebook={(notebook) => console.log("Sharing notebook:", notebook)}
-            user={user} // Pass user data to DashboardView
+            user={user}
           />
         )
     }

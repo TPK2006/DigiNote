@@ -9,6 +9,18 @@ router.post("/create/:qrId", async (req, res) => {
     console.log("Received request to create book for QR ID:", req.params.qrId)
     console.log("Request body:", req.body)
 
+    // Check if a book with this QR ID already exists
+    const existingBook = await Book.findOne({ qrId: req.params.qrId })
+    if (existingBook) {
+      console.log("Book already exists for QR ID:", req.params.qrId)
+      return res.status(400).json({ error: "A book with this QR ID already exists" })
+    }
+
+    // Validate required fields
+    if (!req.body.title || !req.body.userId) {
+      return res.status(400).json({ error: "Title and userId are required" })
+    }
+
     // Create new book with user details, book details, and QR details
     const book = new Book({
       title: req.body.title || `Notebook ${new Date().toLocaleDateString()}`,
@@ -19,6 +31,8 @@ router.post("/create/:qrId", async (req, res) => {
       coverImage: req.body.coverImage || "/api/placeholder/400/200",
       pages: req.body.pages || [],
       isPublic: req.body.isPublic !== undefined ? req.body.isPublic : false,
+      createdAt: new Date(),
+      lastUpdated: new Date(),
     })
 
     await book.save()
@@ -30,7 +44,7 @@ router.post("/create/:qrId", async (req, res) => {
       io.emit("bookCreated", {
         message: `New book "${book.title}" created for QR code ${req.params.qrId}`,
         bookId: book._id,
-        qrId: req.params.qrId,
+        qrId: book.qrId,
         timestamp: new Date(),
       })
     }
@@ -84,6 +98,36 @@ router.get("/:bookId", async (req, res) => {
     })
   } catch (err) {
     console.error("Error fetching book:", err)
+    res.status(500).json({ error: `Failed to fetch book: ${err.message}` })
+  }
+})
+
+// Get book by QR ID
+router.get("/qr/:qrId", async (req, res) => {
+  try {
+    console.log("Checking book for QR ID:", req.params.qrId)
+    const book = await Book.findOne({ qrId: req.params.qrId })
+    if (!book) {
+      console.log("No book found for QR ID:", req.params.qrId)
+      return res.json(null) // Return null if no book is found
+    }
+
+    res.json({
+      id: book._id,
+      title: book.title,
+      qrId: book.qrId,
+      createdBy: book.createdBy,
+      userName: book.userName,
+      userEmail: book.userEmail,
+      coverImage: book.coverImage,
+      pages: book.pages,
+      totalPages: book.pages.length,
+      isPublic: book.isPublic,
+      createdAt: book.createdAt,
+      lastUpdated: book.lastUpdated,
+    })
+  } catch (err) {
+    console.error("Error fetching book by QR ID:", err)
     res.status(500).json({ error: `Failed to fetch book: ${err.message}` })
   }
 })
