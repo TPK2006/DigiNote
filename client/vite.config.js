@@ -12,7 +12,7 @@ export default defineConfig({
 
     proxy: {
       '/api': {
-        target: 'http://localhost:5005',
+        target: 'process.env.REACT_APP_API_URL',
         changeOrigin: true,
       },
     },

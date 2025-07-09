@@ -30,7 +30,7 @@ function App() {
     if (isAuthenticated && user) {
       const fetchUserBooks = async () => {
         try {
-          const response = await fetch(`http://localhost:5005/api/books/user/${user.googleId}`, {
+          const response = await fetch(`process.env.REACT_APP_API_URL/api/books/user/${user.googleId}`, {
             method: "GET",
             headers: { "Content-Type": "application/json" },
           })

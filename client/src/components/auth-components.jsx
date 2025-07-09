@@ -84,7 +84,7 @@ export function LoginView({ onLogin }) {
       }
 
       try {
-        const response = await fetch("http://localhost:5005/api/save-user", {
+        const response = await fetch("process.env.REACT_APP_API_URL/api/save-user", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -101,14 +101,14 @@ export function LoginView({ onLogin }) {
 
         const adjustedUser = {
           ...result.user,
-          profilePicturePath: `http://localhost:5005/components/${result.user.googleId}.jpg`,
+          profilePicturePath: `process.env.REACT_APP_API_URL/components/${result.user.googleId}.jpg`,
         }
         onLogin(adjustedUser)
       } catch (error) {
         console.error("Error saving user data to backend:", error)
         setError("Failed to save user data: " + error.message)
         // Proceed with login using Google data
-        userData.profilePicturePath = `http://localhost:5005/components/${userData.googleId}.jpg`
+        userData.profilePicturePath = `process.env.REACT_APP_API_URL/components/${userData.googleId}.jpg`
         onLogin(userData)
       }
     } catch (error) {
@@ -312,7 +312,7 @@ export function Header({ user, onLogout, isMobileMenuOpen, setIsMobileMenuOpen, 
 
     try {
       // Try to load the profile image from the backend
-      const imageUrl = `http://localhost:5005/components/${user.googleId}.jpg`
+      const imageUrl = `process.env.REACT_APP_API_URL/components/${user.googleId}.jpg`
 
       // Test if the image exists by creating a new Image object
       const img = new Image()

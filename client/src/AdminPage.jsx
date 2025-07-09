@@ -24,7 +24,7 @@ const AdminPage = () => {
     // Initialize WebSocket
     useEffect(() => {
         // Try to connect to network IP first, fallback to localhost
-        const socketUrl = networkIP !== 'localhost' ? `http://${networkIP}:5005` : 'http://localhost:5005';
+        const socketUrl = networkIP !== 'localhost' ? `process.env.REACT_APP_API_URL` : 'process.env.REACT_APP_API_URL';
         
         socketRef.current = io(socketUrl, {
             reconnection: true,
@@ -85,7 +85,7 @@ const AdminPage = () => {
             setScanCount(0);
             setLastScanInfo(null);
             
-            const response = await fetch('http://localhost:5005/api/qr/generate', {
+            const response = await fetch('process.env.REACT_APP_API_URL/api/qr/generate', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -135,7 +135,7 @@ const AdminPage = () => {
     // Load saved QR codes
     const loadSavedQRs = async () => {
         try {
-            const response = await fetch('http://localhost:5005/api/qr/list');
+            const response = await fetch('process.env.REACT_APP_API_URL/api/qr/list');
             if (response.ok) {
                 const qrList = await response.json();
                 setSavedQRs(qrList);
@@ -213,7 +213,7 @@ const AdminPage = () => {
             {/* Network Info */}
             <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
                 <p className="text-sm text-blue-700">
-                    <strong>Network:</strong> {networkIP !== 'localhost' ? `${networkIP}:5005` : 'localhost:5005'}
+                    <strong>Network:</strong> {networkIP !== 'localhost' ? `process.env.REACT_APP_API_URL` : 'process.env.REACT_APP_API_URL'}
                     {networkIP !== 'localhost' && (
                         <span className="ml-2 text-green-600">✅ Mobile devices can scan!</span>
                     )}
@@ -228,7 +228,7 @@ const AdminPage = () => {
                         {savedQRs.slice(0, 6).map((qr) => (
                             <div key={qr.qrId} className="border rounded-lg p-4 bg-gray-50">
                                 <img 
-                                    src={`http://localhost:5005${qr.filePath}`} 
+                                    src={`process.env.REACT_APP_API_URL${qr.filePath}`} 
                                     alt={`QR Code ${qr.qrId.substring(0, 8)}`}
                                     className="w-32 h-32 object-contain mx-auto mb-2 bg-white rounded border"
                                 />
@@ -241,7 +241,7 @@ const AdminPage = () => {
                                     )}
                                 </div>
                                 <a 
-                                    href={`http://localhost:5005${qr.filePath}`} 
+                                    href={`process.env.REACT_APP_API_URL${qr.filePath}`} 
                                     download 
                                     className="block mt-2 text-center px-2 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600 transition-colors"
                                 >
@@ -290,7 +290,7 @@ const AdminPage = () => {
                     {qrImagePath ? (
                         <div className="mx-auto w-fit border-2 border-gray-200 rounded-lg p-4 bg-white">
                             <img 
-                                src={`http://localhost:5005${qrImagePath}`} 
+                                src={`process.env.REACT_APP_API_URL${qrImagePath}`} 
                                 alt="Generated QR Code" 
                                 className="w-80 h-80 object-contain"
                             />
@@ -305,7 +305,7 @@ const AdminPage = () => {
                                 <div className="mt-2">
                                     <p><strong>Saved as:</strong> <code>{qrImagePath}</code></p>
                                     <a 
-                                        href={`http://localhost:5005${qrImagePath}`} 
+                                        href={`process.env.REACT_APP_API_URL${qrImagePath}`} 
                                         download 
                                         className="inline-block mt-2 px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
                                     >
